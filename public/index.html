@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qwen Chat</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<style>
+  :root {
+    --bg: #fafaf9; --panel: #ffffff; --text: #1c1917; --muted: #78716c;
+    --border: #e7e5e4; --accent: #6d28d9; --accent-text: #fff;
+    --user-bg: #ede9fe; --code-bg: #f5f5f4; --think-bg: #f5f5f4;
+    --ok: #16a34a; --bad: #dc2626; --warn: #d97706;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c0a09; --panel: #1c1917; --text: #f5f5f4; --muted: #a8a29e;
+      --border: #292524; --accent: #a78bfa; --accent-text: #1c1917;
+      --user-bg: #2e1065; --code-bg: #292524; --think-bg: #1c1917;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    border-bottom: 1px solid var(--border); background: var(--panel);
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .status { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
+  .spacer { flex: 1; }
+  .controls { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--muted); }
+  .controls label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+  button {
+    font: inherit; border: 1px solid var(--border); background: var(--panel); color: var(--text);
+    padding: 6px 12px; border-radius: 8px; cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+
+  main { flex: 1; overflow-y: auto; }
+  #messages { max-width: 780px; margin: 0 auto; padding: 24px 16px 8px; }
+  .empty { text-align: center; color: var(--muted); margin-top: 18vh; }
+  .empty h2 { color: var(--text); font-weight: 600; margin-bottom: 4px; }
+  .msg { margin-bottom: 20px; }
+  .msg.user { display: flex; justify-content: flex-end; }
+  .msg.user .bubble {
+    background: var(--user-bg); padding: 10px 14px; border-radius: 14px 14px 4px 14px;
+    max-width: 85%; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .msg.assistant .body { overflow-wrap: anywhere; }
+  .msg.assistant .body > :first-child { margin-top: 0; }
+  .msg.assistant .body > :last-child { margin-bottom: 0; }
+  .body pre { background: var(--code-bg); padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
+  .body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
+  .body :not(pre) > code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  .body table { border-collapse: collapse; } .body td, .body th { border: 1px solid var(--border); padding: 4px 8px; }
+  details.think {
+    background: var(--think-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 10px; margin-bottom: 10px; font-size: 13px; color: var(--muted);
+  }
+  details.think summary { cursor: pointer; user-select: none; }
+  details.think .think-text { white-space: pre-wrap; margin-top: 6px; }
+  .meta { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .error { color: var(--bad); }
+  .cursor::after { content: "▍"; animation: blink 1s steps(1) infinite; color: var(--muted); }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  footer { padding: 12px 16px 16px; }
+  form { max-width: 780px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
+  textarea {
+    flex: 1; resize: none; font: inherit; color: var(--text); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px;
+    max-height: 200px; outline: none;
+  }
+  textarea:focus { border-color: var(--accent); }
+  form button { height: 44px; border-radius: 12px; padding: 0 18px; }
+  @media (max-width: 560px) { .controls .hide-sm { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Qwen Chat</h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="statusText">Connecting…</span></div>
+  <div class="spacer"></div>
+  <div class="controls">
+    <label title="Let the model reason before answering (slower)">
+      <input type="checkbox" id="thinking"> Thinking
+    </label>
+    <label class="hide-sm" title="Higher = more creative">
+      Temp <input type="range" id="temp" min="0" max="1.5" step="0.1" value="0.7" style="width:70px">
+      <span id="tempVal">0.7</span>
+    </label>
+    <button id="newChat">New chat</button>
+  </div>
+</header>
+
+<main id="scroller"><div id="messages"></div></main>
+
+<footer>
+  <form id="form">
+    <textarea id="input" rows="1" placeholder="Message Qwen…  (Enter to send, Shift+Enter for newline)"></textarea>
+    <button type="submit" class="primary" id="send">Send</button>
+  </form>
+</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const messagesEl = $("messages"), scroller = $("scroller"), input = $("input");
+const sendBtn = $("send"), thinkingEl = $("thinking"), tempEl = $("temp");
+
+const store = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+
+// Each message: { role, content, thinking? }. Only role/content go to the model.
+let history = store.get("qwen-chat-history", []);
+let controller = null;
+
+thinkingEl.checked = store.get("qwen-chat-thinking", false);
+tempEl.value = store.get("qwen-chat-temp", 0.7);
+$("tempVal").textContent = tempEl.value;
+thinkingEl.onchange = () => store.set("qwen-chat-thinking", thinkingEl.checked);
+tempEl.oninput = () => { $("tempVal").textContent = tempEl.value; store.set("qwen-chat-temp", +tempEl.value); };
+
+const md = (s) => DOMPurify.sanitize(marked.parse(s));
+const nearBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+const scrollDown = () => { scroller.scrollTop = scroller.scrollHeight; };
+
+function renderEmpty() {
+  messagesEl.innerHTML = `<div class="empty"><h2>Chat with Qwen3-8B</h2>
+    <p>Running on your RunPod L40S. Turn on <b>Thinking</b> for harder questions.</p></div>`;
+}
+
+function addUser(text) {
+  const el = document.createElement("div");
+  el.className = "msg user";
+  el.innerHTML = `<div class="bubble"></div>`;
+  el.firstChild.textContent = text;
+  messagesEl.appendChild(el);
+}
+
+function addAssistant() {
+  const el = document.createElement("div");
+  el.className = "msg assistant";
+  el.innerHTML = `<details class="think" hidden><summary>Thinking…</summary><div class="think-text"></div></details>
+    <div class="body"></div><div class="meta"></div>`;
+  messagesEl.appendChild(el);
+  return {
+    el,
+    update(thinking, content, streaming) {
+      const det = el.querySelector(".think");
+      if (thinking.trim()) {
+        det.hidden = false;
+        det.querySelector(".think-text").textContent = thinking.trim();
+        det.querySelector("summary").textContent = streaming && !content ? "Thinking…" : "Thought process";
+      }
+      const body = el.querySelector(".body");
+      body.innerHTML = md(content);
+      body.classList.toggle("cursor", streaming);
+    },
+    meta(text, isError) {
+      const m = el.querySelector(".meta");
+      m.textContent = text;
+      m.classList.toggle("error", !!isError);
+    },
+  };
+}
+
+function renderAll() {
+  messagesEl.innerHTML = "";
+  if (!history.length) return renderEmpty();
+  for (const m of history) {
+    if (m.role === "user") addUser(m.content);
+    else addAssistant().update(m.thinking || "", m.content, false);
+  }
+  scrollDown();
+}
+
+// Qwen3 emits its reasoning inline as <think>...</think> before the answer.
+function splitThinking(raw) {
+  const start = raw.indexOf("<think>");
+  if (start === -1) return { thinking: "", content: raw };
+  const end = raw.indexOf("</think>");
+  if (end === -1) return { thinking: raw.slice(start + 7), content: "" };
+  return { thinking: raw.slice(start + 7, end), content: raw.slice(end + 8).replace(/^\s+/, "") };
+}
+
+async function send(text) {
+  if (!document.querySelector(".msg")) messagesEl.innerHTML = "";
+  history.push({ role: "user", content: text });
+  addUser(text);
+  const view = addAssistant();
+  view.update("", "", true);
+  scrollDown();
+  setBusy(true);
+
+  controller = new AbortController();
+  let raw = "", tokens = 0;
+  const t0 = performance.now();
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        messages: history.map(({ role, content }) => ({ role, content })),
+        temperature: +tempEl.value,
+        thinking: thinkingEl.checked,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Server returned ${res.status}`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ") || line === "data: [DONE]") continue;
+        const delta = JSON.parse(line.slice(6)).choices?.[0]?.delta;
+        if (delta?.content) { raw += delta.content; tokens++; }
+      }
+      const stick = nearBottom();
+      const { thinking, content } = splitThinking(raw);
+      view.update(thinking, content, true);
+      if (stick) scrollDown();
+    }
+    finish();
+  } catch (err) {
+    if (err.name === "AbortError") finish(" · stopped");
+    else {
+      finish();
+      view.meta(err.message, true);
+      if (!raw) history.pop(); // drop the empty reply so the user can retry
+    }
+  }
+
+  function finish(suffix = "") {
+    const { thinking, content } = splitThinking(raw);
+    view.update(thinking, content, false);
+    if (raw) {
+      history.push({ role: "assistant", content, thinking });
+      store.set("qwen-chat-history", history);
+      const secs = (performance.now() - t0) / 1000;
+      view.meta(`${tokens} tokens · ${secs.toFixed(1)}s · ${(tokens / secs).toFixed(0)} tok/s${suffix}`);
+    } else {
+      history.pop(); // remove the unanswered user turn from what we send next time
+      store.set("qwen-chat-history", history);
+    }
+    setBusy(false);
+  }
+}
+
+function setBusy(busy) {
+  if (!busy) controller = null;
+  sendBtn.textContent = busy ? "Stop" : "Send";
+  sendBtn.classList.toggle("primary", !busy);
+  if (!busy) input.focus();
+}
+
+$("form").onsubmit = (e) => {
+  e.preventDefault();
+  if (controller) return controller.abort();
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  autosize();
+  send(text);
+};
+input.onkeydown = (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    if (!controller) $("form").requestSubmit();
+  }
+};
+function autosize() { input.style.height = "auto"; input.style.height = input.scrollHeight + 2 + "px"; }
+input.oninput = autosize;
+
+$("newChat").onclick = () => {
+  controller?.abort();
+  history = [];
+  store.set("qwen-chat-history", history);
+  renderAll();
+  input.focus();
+};
+
+async function checkHealth() {
+  const dot = $("dot"), txt = $("statusText");
+  try {
+    const r = await fetch("/api/health");
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error);
+    dot.className = "dot ok";
+    txt.textContent = `${d.model.split("/").pop()} · ${Math.round(d.maxLen / 1000)}K ctx`;
+  } catch (e) {
+    dot.className = "dot bad";
+    txt.textContent = "Pod offline";
+    txt.title = e.message || "";
+  }
+}
+
+renderAll();
+checkHealth();
+setInterval(checkHealth, 30000);
+input.focus();
+</script>
+</body>
+</html>
